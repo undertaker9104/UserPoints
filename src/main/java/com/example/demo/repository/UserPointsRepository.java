@@ -22,8 +22,7 @@ public interface UserPointsRepository extends JpaRepository<UserPoints, String> 
                                         @Param("amount") Integer amount,
                                         @Param("version") Integer version);
 
-    @Query("SELECT u FROM UserPoints u ORDER BY u.totalPoints DESC")
-    List<UserPoints> findTopUsers();
+    List<UserPoints> findTop10ByOrderByTotalPointsDesc();
 
     boolean existsByUserId(String userId);
 }

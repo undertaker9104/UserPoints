@@ -21,6 +21,9 @@ public class PointRecord {
     @Column(name = "user_id", nullable = false, length = 100)
     private String userId;
 
+    @Column(name = "transaction_id", length = 100)
+    private String transactionId;
+
     @Column(nullable = false)
     private Integer amount;
 
@@ -48,5 +51,12 @@ public class PointRecord {
         this.userId = userId;
         this.amount = amount;
         this.reason = reason;
+    }
+
+    public PointRecord(String userId, Integer amount, String reason, String transactionId) {
+        this.userId = userId;
+        this.amount = amount;
+        this.reason = reason;
+        this.transactionId = transactionId;
     }
 }

@@ -2,6 +2,7 @@ package com.example.demo.mq;
 
 import com.example.demo.cache.PointsCacheService;
 import com.example.demo.model.message.PointsEventMessage;
+import com.example.demo.repository.UserPointsRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
@@ -11,6 +12,17 @@ import org.springframework.stereotype.Component;
 
 import java.util.concurrent.TimeUnit;
 
+/**
+ * RocketMQ Message Consumer
+ *
+ * Processes points event messages from Producer, updates Redis cache and leaderboard.
+ *
+ * Idempotency guarantee:
+ * 1. Check if PROCESSED key exists
+ * 2. Acquire processing lock to prevent concurrent consumption
+ * 3. Double-check after acquiring lock
+ * 4. Use SET/ZADD (overwrite operations) to ensure same result on multiple executions
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -27,6 +39,7 @@ public class PointsEventConsumer implements RocketMQListener<PointsEventMessage>
 
     private final PointsCacheService cacheService;
     private final StringRedisTemplate redisTemplate;
+    private final UserPointsRepository userPointsRepository;
 
     @Override
     public void onMessage(PointsEventMessage message) {
@@ -79,13 +92,28 @@ public class PointsEventConsumer implements RocketMQListener<PointsEventMessage>
     }
 
     private void processEvent(PointsEventMessage message) {
+        String eventId = message.getEventId();
         String userId = message.getUserId();
-        Long totalPoints = message.getTotalPoints();
+
+        // Always query DB for the latest totalPoints to avoid race conditions
+        // when multiple events for the same user are processed concurrently.
+        // The DB is the source of truth, and this ensures cache consistency.
+        Long totalPoints = userPointsRepository.findByUserId(userId)
+                .map(up -> up.getTotalPoints())
+                .orElse(null);
+
+        if (totalPoints == null) {
+            log.error("User not found in DB for event: {}, userId={}", eventId, userId);
+            throw new RuntimeException("User not found in DB");
+        }
 
         // Update cache (idempotent: SET overwrites)
         cacheService.setUserPoints(userId, totalPoints);
 
         // Update leaderboard (idempotent: ZADD overwrites score)
         cacheService.updateLeaderboard(userId, totalPoints);
+
+        log.info("Cache and leaderboard updated: userId={}, totalPoints={}", userId, totalPoints);
     }
+
 }

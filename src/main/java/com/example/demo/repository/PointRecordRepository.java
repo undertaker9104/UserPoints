@@ -12,4 +12,6 @@ public interface PointRecordRepository extends JpaRepository<PointRecord, Long> 
     List<PointRecord> findByUserId(String userId);
 
     void deleteByUserId(String userId);
+
+    boolean existsByTransactionId(String transactionId);
 }

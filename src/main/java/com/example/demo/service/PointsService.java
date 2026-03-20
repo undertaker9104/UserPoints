@@ -14,6 +14,7 @@ import com.example.demo.repository.PointRecordRepository;
 import com.example.demo.repository.UserPointsRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,55 +28,84 @@ public class PointsService {
     private final RedisLock redisLock;
     private final PointsCacheService cacheService;
     private final PointsEventProducer producer;
+    private final StringRedisTemplate redisTemplate;
 
-    @Transactional
+    private static final int MAX_WAIT_RETRIES = 50;  // Max wait 5 seconds (50 * 100ms)
+    private static final int MAX_CACHE_LOAD_RETRIES = 3;
+
+    /**
+     * Add points - using RocketMQ transactional message
+     *
+     * Workflow:
+     * 1. Send Half Message to RocketMQ
+     * 2. Execute local transaction in TransactionListener (acquire lock -> update DB)
+     * 3. COMMIT message if local transaction succeeds, ROLLBACK if fails
+     * 4. Consumer receives message and updates Redis cache
+     *
+     * This guarantees DB and MQ consistency:
+     * - DB success -> message will be delivered
+     * - DB failure -> message will not be delivered
+     */
     public PointsResponse addPoints(AddPointsRequest request) {
         String userId = request.getUserId();
 
-        // Step 1: Acquire lock
-        if (!redisLock.lock(RedisLock.LockType.USER_POINTS, userId)) {
-            throw new BusinessException(ErrorCode.CONFLICT, "Operation in progress, please retry");
+        log.info("Adding points with transactional message: userId={}, amount={}",
+                userId, request.getAmount());
+
+        // Send transactional message (local transaction executed in TransactionListener)
+        String transactionId = producer.sendTransactionalPointsEvent(
+                userId, request.getAmount(), request.getReason()
+        );
+
+        // Wait for transaction completion and get result
+        Long newTotal = waitForTransactionResult(transactionId);
+
+        if (newTotal == null) {
+            // Transaction may have failed or timed out
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Transaction timeout or failed");
         }
 
-        try {
-            // Step 2: Get or create user points
-            UserPoints userPoints = userPointsRepository.findByUserId(userId)
-                    .orElse(null);
+        log.info("Points added successfully: userId={}, amount={}, total={}",
+                userId, request.getAmount(), newTotal);
 
-            Long newTotal;
-            if (userPoints == null) {
-                // New user
-                userPoints = new UserPoints(userId, (long) request.getAmount());
-                userPointsRepository.save(userPoints);
-                newTotal = (long) request.getAmount();
-            } else {
-                // Existing user - optimistic lock update
-                int updated = userPointsRepository.updatePointsWithOptimisticLock(
-                        userId, request.getAmount(), userPoints.getVersion()
-                );
-                if (updated == 0) {
-                    throw new BusinessException(ErrorCode.CONFLICT, "Concurrent update detected, please retry");
-                }
-                newTotal = userPoints.getTotalPoints() + request.getAmount();
-            }
-
-            // Step 3: Save point record
-            PointRecord record = new PointRecord(userId, request.getAmount(), request.getReason());
-            PointRecord savedRecord = pointRecordRepository.save(record);
-
-            // Step 4: Send MQ message
-            producer.sendPointsEvent(savedRecord.getId(), userId, request.getAmount(), newTotal, request.getReason());
-
-            log.info("Points added: userId={}, amount={}, total={}", userId, request.getAmount(), newTotal);
-            return new PointsResponse(userId, newTotal);
-
-        } finally {
-            redisLock.unlock(RedisLock.LockType.USER_POINTS, userId);
-        }
+        return new PointsResponse(userId, newTotal);
     }
 
-    private static final int MAX_CACHE_LOAD_RETRIES = 3;
+    /**
+     * Wait for transaction result.
+     * TransactionListener writes result to Redis.
+     */
+    private Long waitForTransactionResult(String transactionId) {
+        String resultKey = "POINTS:TX:RESULT:" + transactionId;
+        String statusKey = "POINTS:TX:STATUS:" + transactionId;
 
+        for (int i = 0; i < MAX_WAIT_RETRIES; i++) {
+            // Check result first
+            String result = redisTemplate.opsForValue().get(resultKey);
+            if (result != null) {
+                return Long.parseLong(result);
+            }
+
+            // Check status, if ROLLBACK then return failure immediately
+            String status = redisTemplate.opsForValue().get(statusKey);
+            if ("ROLLBACK".equals(status)) {
+                throw new BusinessException(ErrorCode.CONFLICT, "Transaction rolled back, please retry");
+            }
+
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Interrupted while waiting for transaction");
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Get user points.
+     */
     public PointsResponse getPoints(String userId) {
         // Step 1: Check cache
         Long cachedPoints = cacheService.getUserPoints(userId);
