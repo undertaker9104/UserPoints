@@ -50,9 +50,12 @@ class PointsEventConsumerTest {
         PointsEventMessage message = new PointsEventMessage(
                 "points_123", "ADD", "user_123", 100, 500L, "bonus", LocalDateTime.now()
         );
+        UserPoints userPoints = new UserPoints("user_123", 500L);
+
         when(redisTemplate.hasKey(anyString())).thenReturn(false);
         when(valueOperations.setIfAbsent(anyString(), anyString(), anyLong(), any(TimeUnit.class)))
                 .thenReturn(true);
+        when(userPointsRepository.findByUserId("user_123")).thenReturn(Optional.of(userPoints));
 
         // When
         consumer.onMessage(message);
@@ -79,49 +82,30 @@ class PointsEventConsumerTest {
     }
 
     @Test
-    void should_getTotalPointsFromRedis_when_transactionalMessage() {
-        // Given - transactional message with totalPoints = 0
+    void should_alwaysQueryDbForLatestTotalPoints() {
+        // Given - even if message has totalPoints, consumer queries DB for latest value
         PointsEventMessage message = new PointsEventMessage(
                 "points_tx_123", "ADD", "user_123", 100, 0L, "bonus", LocalDateTime.now()
         );
-        when(redisTemplate.hasKey(anyString())).thenReturn(false);
-        when(valueOperations.setIfAbsent(anyString(), anyString(), anyLong(), any(TimeUnit.class)))
-                .thenReturn(true);
-        when(valueOperations.get("POINTS:TX:RESULT:points_tx_123")).thenReturn("600");
-
-        // When
-        consumer.onMessage(message);
-
-        // Then
-        verify(cacheService).setUserPoints("user_123", 600L);
-        verify(cacheService).updateLeaderboard("user_123", 600L);
-    }
-
-    @Test
-    void should_getTotalPointsFromDb_when_redisResultMissing() {
-        // Given - transactional message, Redis result missing, fall back to DB
-        PointsEventMessage message = new PointsEventMessage(
-                "points_tx_123", "ADD", "user_123", 100, 0L, "bonus", LocalDateTime.now()
-        );
-        UserPoints userPoints = new UserPoints("user_123", 700L);
+        // DB has the latest value (could be different from message due to concurrent updates)
+        UserPoints userPoints = new UserPoints("user_123", 750L);
 
         when(redisTemplate.hasKey(anyString())).thenReturn(false);
         when(valueOperations.setIfAbsent(anyString(), anyString(), anyLong(), any(TimeUnit.class)))
                 .thenReturn(true);
-        when(valueOperations.get("POINTS:TX:RESULT:points_tx_123")).thenReturn(null);
         when(userPointsRepository.findByUserId("user_123")).thenReturn(Optional.of(userPoints));
 
         // When
         consumer.onMessage(message);
 
-        // Then
-        verify(cacheService).setUserPoints("user_123", 700L);
-        verify(cacheService).updateLeaderboard("user_123", 700L);
+        // Then - uses DB value (750), not message value
+        verify(cacheService).setUserPoints("user_123", 750L);
+        verify(cacheService).updateLeaderboard("user_123", 750L);
     }
 
     @Test
-    void should_throwException_when_cannotDetermineTotalPoints() {
-        // Given - transactional message, cannot determine totalPoints
+    void should_throwException_when_userNotFoundInDb() {
+        // Given - user not found in DB
         PointsEventMessage message = new PointsEventMessage(
                 "points_tx_123", "ADD", "user_123", 100, 0L, "bonus", LocalDateTime.now()
         );
@@ -129,12 +113,11 @@ class PointsEventConsumerTest {
         when(redisTemplate.hasKey(anyString())).thenReturn(false);
         when(valueOperations.setIfAbsent(anyString(), anyString(), anyLong(), any(TimeUnit.class)))
                 .thenReturn(true);
-        when(valueOperations.get("POINTS:TX:RESULT:points_tx_123")).thenReturn(null);
         when(userPointsRepository.findByUserId("user_123")).thenReturn(Optional.empty());
 
         // When & Then
         assertThatThrownBy(() -> consumer.onMessage(message))
                 .isInstanceOf(RuntimeException.class)
-                .hasMessage("Cannot determine totalPoints");
+                .hasMessage("User not found in DB");
     }
 }

@@ -34,7 +34,6 @@ public class PointsEventConsumer implements RocketMQListener<PointsEventMessage>
 
     private static final String PROCESSED_KEY_PREFIX = "POINTS:EVENT:PROCESSED:";
     private static final String LOCK_KEY_PREFIX = "POINTS:EVENT:LOCK:";
-    private static final String TX_RESULT_KEY_PREFIX = "POINTS:TX:RESULT:";
     private static final long PROCESSED_TTL_HOURS = 24;
     private static final long LOCK_TTL_SECONDS = 30;
 
@@ -95,17 +94,17 @@ public class PointsEventConsumer implements RocketMQListener<PointsEventMessage>
     private void processEvent(PointsEventMessage message) {
         String eventId = message.getEventId();
         String userId = message.getUserId();
-        Long totalPoints = message.getTotalPoints();
 
-        // If totalPoints is 0, this is a transactional message,
-        // need to get actual value from Redis or DB
-        if (totalPoints == null || totalPoints == 0L) {
-            totalPoints = getTotalPointsFromTransactionResult(eventId, userId);
-        }
+        // Always query DB for the latest totalPoints to avoid race conditions
+        // when multiple events for the same user are processed concurrently.
+        // The DB is the source of truth, and this ensures cache consistency.
+        Long totalPoints = userPointsRepository.findByUserId(userId)
+                .map(up -> up.getTotalPoints())
+                .orElse(null);
 
         if (totalPoints == null) {
-            log.error("Cannot determine totalPoints for event: {}", eventId);
-            throw new RuntimeException("Cannot determine totalPoints");
+            log.error("User not found in DB for event: {}, userId={}", eventId, userId);
+            throw new RuntimeException("User not found in DB");
         }
 
         // Update cache (idempotent: SET overwrites)
@@ -117,26 +116,4 @@ public class PointsEventConsumer implements RocketMQListener<PointsEventMessage>
         log.info("Cache and leaderboard updated: userId={}, totalPoints={}", userId, totalPoints);
     }
 
-    /**
-     * Get actual totalPoints from transaction result or database.
-     */
-    private Long getTotalPointsFromTransactionResult(String eventId, String userId) {
-        // First try to get from transaction result Redis key
-        String resultKey = TX_RESULT_KEY_PREFIX + eventId;
-        String result = redisTemplate.opsForValue().get(resultKey);
-
-        if (result != null) {
-            log.debug("Got totalPoints from transaction result: eventId={}, totalPoints={}", eventId, result);
-            return Long.parseLong(result);
-        }
-
-        // If not in Redis, query from database
-        log.debug("Transaction result not found in Redis, querying DB: userId={}", userId);
-        return userPointsRepository.findByUserId(userId)
-                .map(up -> {
-                    log.debug("Got totalPoints from DB: userId={}, totalPoints={}", userId, up.getTotalPoints());
-                    return up.getTotalPoints();
-                })
-                .orElse(null);
-    }
 }
