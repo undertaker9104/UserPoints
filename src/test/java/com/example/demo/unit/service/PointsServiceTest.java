@@ -203,4 +203,24 @@ class PointsServiceTest {
         verify(cacheService).removeFromLeaderboard("user_123");
         verify(redisLock).unlock(RedisLock.LockType.USER_POINTS, "user_123");
     }
+
+    @Test
+    void should_throwException_when_optimisticLockFails() {
+        // Given
+        AddPointsRequest request = new AddPointsRequest("user_123", 100, "bonus");
+        UserPoints existingPoints = new UserPoints("user_123", 500L);
+        existingPoints.setVersion(0);
+
+        when(redisLock.lock(RedisLock.LockType.USER_POINTS, "user_123")).thenReturn(true);
+        when(userPointsRepository.findByUserId("user_123")).thenReturn(Optional.of(existingPoints));
+        when(userPointsRepository.updatePointsWithOptimisticLock("user_123", 100, 0)).thenReturn(0);
+
+        // When & Then
+        assertThatThrownBy(() -> pointsService.addPoints(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.CONFLICT);
+
+        verify(redisLock).unlock(RedisLock.LockType.USER_POINTS, "user_123");
+    }
 }

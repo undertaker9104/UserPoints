@@ -74,6 +74,8 @@ public class PointsService {
         }
     }
 
+    private static final int MAX_CACHE_LOAD_RETRIES = 3;
+
     public PointsResponse getPoints(String userId) {
         // Step 1: Check cache
         Long cachedPoints = cacheService.getUserPoints(userId);
@@ -86,15 +88,24 @@ public class PointsService {
             throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
-        // Step 3: Acquire cache load lock
-        if (!redisLock.lock(RedisLock.LockType.CACHE_LOAD, userId)) {
-            // Wait and retry
+        // Step 3: Acquire cache load lock with bounded retry
+        int retries = 0;
+        while (!redisLock.lock(RedisLock.LockType.CACHE_LOAD, userId)) {
+            retries++;
+            if (retries >= MAX_CACHE_LOAD_RETRIES) {
+                throw new BusinessException(ErrorCode.CONFLICT, "Unable to acquire cache load lock after retries");
+            }
             try {
                 Thread.sleep(100);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                throw new BusinessException(ErrorCode.CONFLICT, "Interrupted while waiting for cache load lock");
             }
-            return getPoints(userId);
+            // Check cache again after waiting
+            cachedPoints = cacheService.getUserPoints(userId);
+            if (cachedPoints != null) {
+                return new PointsResponse(userId, cachedPoints);
+            }
         }
 
         try {
