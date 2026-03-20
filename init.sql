@@ -12,13 +12,13 @@ CREATE TABLE IF NOT EXISTS point_records (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_user_id (user_id),
-    INDEX idx_created_at (created_at)
+    INDEX idx_user_created (user_id, created_at DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Optional: User Total Points Table (denormalized for performance)
--- This can be used as an alternative to calculating totals on-the-fly
+-- User Total Points Table: denormalized for performance
 CREATE TABLE IF NOT EXISTS user_points (
     user_id VARCHAR(100) PRIMARY KEY,
     total_points BIGINT NOT NULL DEFAULT 0,
+    version INT NOT NULL DEFAULT 0,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
