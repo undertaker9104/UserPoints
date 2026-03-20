@@ -1,4 +1,6 @@
 CLAUDE.md
+.claude/
+docs/plans/
 target/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
