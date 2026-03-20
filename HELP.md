@@ -2,51 +2,42 @@
 
 ## Prerequisites
 
-- Java 21+
-- Docker & Docker Compose
-- Maven
+- Docker & Docker Compose (required)
+- Java 21 (optional, only for local development)
+- Maven (optional, only for local development)
 
-## Quick Start
+---
 
-### 1. Start Infrastructure Services
-
-```bash
-docker-compose up -d
-```
-
-This starts:
-- MySQL (port 3306)
-- Redis (port 6379)
-- RocketMQ Namesrv (port 9876)
-- RocketMQ Broker (port 10911)
-- RocketMQ Console (port 8088)
-
-### 2. Verify Services
+## Quick Start (One Command)
 
 ```bash
-# Check MySQL
-docker exec mysql mysql -utaskuser -ptaskpass -e "USE taskdb; SHOW TABLES;"
+# Start everything (MySQL, Redis, RocketMQ, Application)
+docker-compose up -d --build
 
-# Check Redis
-docker exec redis redis-cli ping
+# Wait for all services to be ready (about 60-90 seconds)
+# Check status
+docker-compose ps
 
-# Check RocketMQ Console
-open http://localhost:8088
+# Test the API
+curl http://localhost:8080/points/leaderboard
 ```
 
-### 3. Run Application
+**That's it!** The application will be available at `http://localhost:8080`
 
-```bash
-# Windows
-set JAVA_HOME=C:\path\to\jdk21
-./mvnw.cmd spring-boot:run
+---
 
-# Linux/Mac
-export JAVA_HOME=/path/to/jdk21
-./mvnw spring-boot:run
-```
+## Service Ports
 
-Application runs on: http://localhost:8080
+| Service | Port | Description |
+|---------|------|-------------|
+| Application | 8080 | REST API |
+| MySQL | 3306 | Database |
+| Redis | 6379 | Cache |
+| RocketMQ Namesrv | 9876 | MQ Registry |
+| RocketMQ Broker | 10911 | MQ Broker |
+| RocketMQ Console | 8088 | MQ Web UI |
+
+---
 
 ## API Endpoints
 
@@ -79,11 +70,71 @@ curl -X PUT http://localhost:8080/points/1 \
 curl -X DELETE http://localhost:8080/points/user_123
 ```
 
+---
+
+## Verify Services
+
+```bash
+# Check all containers are running
+docker-compose ps
+
+# Check application logs
+docker logs user-points-app
+
+# Check application health
+curl http://localhost:8080/actuator/health
+
+# Check MySQL
+docker exec mysql mysql -utaskuser -ptaskpass -e "USE taskdb; SHOW TABLES;"
+
+# Check Redis
+docker exec redis redis-cli ping
+
+# Check RocketMQ Console
+open http://localhost:8088
+```
+
+---
+
+## Stop Services
+
+```bash
+# Stop all services
+docker-compose down
+
+# Stop and remove data volumes (clean reset)
+docker-compose down -v
+```
+
+---
+
+## Local Development (Without Docker for App)
+
+If you want to run the application locally for development:
+
+```bash
+# 1. Start only infrastructure
+docker-compose up -d mysql redis rocketmq-namesrv rocketmq-broker
+
+# 2. Wait for services to be ready
+sleep 30
+
+# 3. Run application locally
+./mvnw spring-boot:run
+
+# Or on Windows
+./mvnw.cmd spring-boot:run
+```
+
+---
+
 ## Running Tests
 
 ```bash
 ./mvnw test
 ```
+
+---
 
 ## Architecture Highlights
 
