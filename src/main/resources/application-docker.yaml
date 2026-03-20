@@ -1,0 +1,16 @@
+# Docker 環境配置
+# 當應用在 Docker 內運行時，需要用容器名稱而不是 localhost
+
+spring:
+  datasource:
+    url: jdbc:mysql://mysql:3306/taskdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
+    username: taskuser
+    password: taskpass
+
+  data:
+    redis:
+      host: redis
+      port: 6379
+
+rocketmq:
+  name-server: rocketmq-namesrv:9876
