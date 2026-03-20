@@ -27,9 +27,9 @@ public class LeaderboardService {
             return leaderboard;
         }
 
-        // Step 2: Rebuild from MySQL
+        // Step 2: Rebuild from MySQL (only fetch top 10 for performance)
         log.info("Leaderboard cache empty, rebuilding from database");
-        List<UserPoints> topUsers = userPointsRepository.findTopUsers();
+        List<UserPoints> topUsers = userPointsRepository.findTop10ByOrderByTotalPointsDesc();
 
         // Update Redis and return
         for (UserPoints userPoints : topUsers) {
@@ -37,7 +37,6 @@ public class LeaderboardService {
         }
 
         return topUsers.stream()
-                .limit(10)
                 .map(u -> new LeaderboardEntry(u.getUserId(), u.getTotalPoints()))
                 .collect(Collectors.toList());
     }
