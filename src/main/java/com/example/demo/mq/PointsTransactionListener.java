@@ -69,7 +69,8 @@ public class PointsTransactionListener implements RocketMQLocalTransactionListen
         // Step 1: Acquire distributed lock
         if (!redisLock.lock(RedisLock.LockType.USER_POINTS, userId)) {
             log.warn("Failed to acquire lock for user: {}", userId);
-            // Return ROLLBACK, message will not be delivered
+            // Save ROLLBACK status so waitForTransactionResult can detect it quickly
+            saveTransactionStatus(transactionId, "ROLLBACK", null);
             return RocketMQLocalTransactionState.ROLLBACK;
         }
 
@@ -132,9 +133,8 @@ public class PointsTransactionListener implements RocketMQLocalTransactionListen
                 log.info("Transaction check result: ROLLBACK, transactionId={}", transactionId);
                 return RocketMQLocalTransactionState.ROLLBACK;
             } else {
-                // If status unknown, check if record exists in database
-                String recordId = transactionId.replace("points_", "");
-                boolean exists = pointRecordRepository.existsById(Long.parseLong(recordId));
+                // If status unknown, check if record exists in database by transactionId
+                boolean exists = pointRecordRepository.existsByTransactionId(transactionId);
 
                 if (exists) {
                     log.info("Transaction check: record exists, COMMIT, transactionId={}", transactionId);
@@ -181,8 +181,8 @@ public class PointsTransactionListener implements RocketMQLocalTransactionListen
             newTotal = userPoints.getTotalPoints() + amount;
         }
 
-        // Save point record
-        PointRecord record = new PointRecord(userId, amount, reason);
+        // Save point record with transactionId for check back
+        PointRecord record = new PointRecord(userId, amount, reason, arg.getTransactionId());
         pointRecordRepository.save(record);
 
         return newTotal;
